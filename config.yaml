@@ -15,7 +15,7 @@ data:
   # GitHub repo ("owner/name") whose realtime-data branch holds the logger CSVs. When
   # data/realtime/ is empty (a hosted deploy) the app reads the last few days from
   # raw.githubusercontent.com. Public repo, no token. Leave OWNER to turn this off.
-  realtime_repo: "OWNER/train-simulation"
+  realtime_repo: "affannajiy/train-simulation"
   realtime_branch: "realtime-data"
   realtime_remote_days: 7
   results_dir: "results"
