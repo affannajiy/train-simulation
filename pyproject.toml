@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ets-sim"
+version = "0.1.0"
+description = "Discrete event simulation of KTM ETS delay propagation"
+requires-python = ">=3.12"
+# Runtime versions are pinned in requirements.txt.
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

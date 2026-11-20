@@ -1,0 +1,69 @@
+# Logs the KTMB GTFS-Realtime vehicle-position feed.
+#
+# Starts every hour, polls every 60 s for about 55 min (config.yaml: realtime_logger), then
+# makes ONE commit to the orphan branch `realtime-data`. The `main` branch is never written.
+# GitHub disables scheduled workflows after 60 days without repository activity; re-enable
+# it from the Actions tab if that happens.
+
+name: realtime-logger
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: realtime-logger
+  cancel-in-progress: false
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out code (main)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: code
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Install logger dependencies
+        run: pip install -r code/logger/requirements.txt
+
+      - name: Check out or create realtime-data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir data && cd data
+          git init -q
+          git config user.name "realtime-logger[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth 1 origin realtime-data; then
+            git checkout -q -b realtime-data FETCH_HEAD
+          else
+            git checkout -q --orphan realtime-data
+          fi
+
+      - name: Poll feed
+        run: python code/logger/fetch_realtime.py --config code/config.yaml --out-dir data/data/realtime
+
+      - name: Commit and push
+        if: always()
+        run: |
+          cd data
+          git add data/realtime
+          if git diff --cached --quiet; then
+            echo "No new rows"
+            exit 0
+          fi
+          git commit -q -m "realtime: $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q origin realtime-data

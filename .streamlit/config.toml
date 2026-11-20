@@ -1,0 +1,41 @@
+[browser]
+gatherUsageStats = false
+
+# Control-centre theme. Tokens mirror src/ets_sim/style.py; change both together.
+[theme]
+base = "dark"
+primaryColor = "#FF6B1A"
+backgroundColor = "#0D0D0D"
+secondaryBackgroundColor = "#1A1A1A"
+textColor = "#D4D4D8"
+borderColor = "#27272A"
+dataframeBorderColor = "#27272A"
+dataframeHeaderBackgroundColor = "#141414"
+dataframeHeaderTextColor = "#8E8E93"
+showWidgetBorder = true
+showSidebarBorder = true
+linkColor = "#FF7A2F"
+linkUnderline = false
+greenColor = "#F2F2F2"
+yellowColor = "#FF6B1A"
+orangeColor = "#FF6B1A"
+redColor = "#DC2626"
+blueColor = "#FFFFFF"
+violetColor = "#FFB27A"
+grayColor = "#8E8E93"
+font = "Inter Tight:https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Inter Tight:https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap, sans-serif"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap, monospace"
+baseFontSize = 14
+baseRadius = "4px"
+buttonRadius = "4px"
+headingFontSizes = ["22px", "16px", "13px", "13px", "13px", "13px"]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+metricValueFontSize = "28px"
+metricValueFontWeight = 500
+chartCategoricalColors = ["#FF6B1A", "#FFFFFF", "#FFB27A", "#8E8E93", "#DC2626", "#5C5C61"]
+
+[theme.sidebar]
+backgroundColor = "#111111"
+secondaryBackgroundColor = "#1A1A1A"
+borderColor = "#27272A"

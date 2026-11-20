@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
+
+# Data: raw downloads and generated outputs are rebuilt by the scripts.
+# The pinned feed in data/snapshots/ IS committed.
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+# Realtime logs live on the realtime-data branch, not on main.
+data/realtime/*
+!data/realtime/.gitkeep
+results/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Local tooling
+.claude/
+.streamlit/secrets.toml
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

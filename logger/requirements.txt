@@ -1,0 +1,5 @@
+# Minimal pinned set for the GitHub Actions logger.
+gtfs-realtime-bindings==3.0.0
+protobuf==7.36.2
+PyYAML==6.0.3
+requests==2.34.2

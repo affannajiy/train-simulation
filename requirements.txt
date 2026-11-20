@@ -1,0 +1,12 @@
+# Runtime dependencies (also what Streamlit Community Cloud installs).
+# Pinned versions, tested on Python 3.13 (Windows) on 2026-11-20.
+# Development extras (pytest): requirements-dev.txt
+gtfs-realtime-bindings==3.0.0
+numpy==2.5.5
+pandas==3.1.1
+plotly==7.1.0
+protobuf==7.36.2
+PyYAML==6.0.3
+requests==2.34.2
+simpy==4.1.2
+streamlit==1.67.0

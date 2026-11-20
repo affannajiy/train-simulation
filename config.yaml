@@ -1,0 +1,102 @@
+# KTM ETS delay propagation simulator - configuration.
+#
+# Every value marked ASSUMPTION is not confirmed by KTMB data. The README section
+# "Assumptions" lists the same values with the reason for each one.
+# Times are in minutes unless the key name says otherwise.
+
+data:
+  gtfs_static_url: "https://api.data.gov.my/gtfs-static/ktmb"
+  realtime_vehicle_url: "https://api.data.gov.my/gtfs-realtime/vehicle-position/ktmb"
+  # Pinned feed used for all reported results. The live feed changes daily.
+  snapshot_zip: "data/snapshots/ktmb_gtfs_2026-11-20.zip"
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  realtime_dir: "data/realtime"
+  # GitHub repo ("owner/name") whose realtime-data branch holds the logger CSVs. When
+  # data/realtime/ is empty (a hosted deploy) the app reads the last few days from
+  # raw.githubusercontent.com. Public repo, no token. Leave OWNER to turn this off.
+  realtime_repo: "OWNER/train-simulation"
+  realtime_branch: "realtime-data"
+  realtime_remote_days: 7
+  results_dir: "results"
+  http_timeout_s: 60
+
+network:
+  # GTFS route_ids to simulate. Add Komuter route_ids here later as background traffic.
+  routes: ["ETS"]
+  # Calendar date used to pick active trips. Must fall inside the feed's calendar range.
+  service_date: "2026-11-20"
+  # Stations outside KTMB infrastructure. Trips are cut off before them.
+  excluded_stations: ["HAT YAI"]
+  # Branch lines off the main line. Butterworth is a spur from Bukit Mertajam.
+  branches:
+    - junction: "BUKIT MERTAJAM"
+      terminus: "BUTTERWORTH"
+  # Station km values from different trips may disagree by this much before it is reported.
+  km_consistency_tolerance_km: 1.0
+  # ASSUMPTION: maximum fixed-block length. Each station-to-station section is split into
+  # equal sub-blocks no longer than this. Real KTMB signalling sections are not modelled.
+  max_block_km: 5.0
+
+platforms:
+  # ASSUMPTION: platforms per station per direction where the real number is unknown.
+  default_per_direction: 2
+  # Per-station overrides, keyed by GTFS stop_name. Add with a comment saying where the
+  # number came from, for example:  "KL SENTRAL": 3
+  overrides: {}
+
+# Class 93 (ETS) trainset facts. Stored for reference; the macroscopic model does not use
+# acceleration or seat count.
+trainset:
+  class: "93"
+  cars: 6
+  seats: 320
+  acceleration_mps2: 0.7
+  service_speed_kmh: 140
+  design_speed_kmh: 160
+
+operations:
+  # Line speed used to compute minimum running time and therefore recoverable slack.
+  # 140 km/h is the service speed. 160 km/h is the design speed, used only as an
+  # idealised sensitivity scenario, not as a statement about permitted line speed.
+  line_speed_kmh: 140
+  # ASSUMPTION: shortest dwell a late train can achieve at an intermediate stop.
+  min_dwell_min: 1.0
+
+primary_delay:
+  # ASSUMPTION: all values below are placeholders, to be fitted from the realtime logs.
+  # A departure is disrupted with probability p; the size is lognormal with the given
+  # median (minutes) and sigma (shape), truncated at cap_min.
+  p_origin: 0.30
+  origin_median_min: 3.0
+  origin_sigma: 0.8
+  p_stop: 0.05
+  stop_median_min: 1.5
+  stop_sigma: 0.8
+  cap_min: 60
+
+metrics:
+  # A train is late at a stop if it is more than this many minutes behind schedule.
+  late_threshold_min: 5
+
+experiments:
+  replications: 100
+  base_seed: 2026
+  confidence_level: 0.95
+  # Extra minutes per journey, spread over sections in proportion to running time.
+  buffer_minutes: [0, 2, 4, 6]
+  line_speeds_kmh: [140, 160]
+  # Number of synthetic extra trips added per day in the frequency stress test.
+  frequency_extra_trips: [0, 10, 20, 30, 40, 60]
+  # ASSUMPTION: a synthetic trip copies an existing trip's pattern, shifted by this offset.
+  frequency_offset_min: 20
+  # ASSUMPTION: on-time target used to mark where the network stops coping.
+  on_time_target_pct: 80
+  block_km_values: [2.5, 5.0, 10.0]
+
+realtime_logger:
+  poll_interval_s: 60
+  run_duration_min: 55
+  # Positions outside this box (or at 0,0) are flagged bad_position. Covers Malaysia
+  # and southern Thailand.
+  bbox: {lat_min: 0.5, lat_max: 7.5, lon_min: 99.0, lon_max: 105.0}
