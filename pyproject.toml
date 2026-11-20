@@ -13,5 +13,8 @@ dependencies = []
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+ets_sim = ["*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

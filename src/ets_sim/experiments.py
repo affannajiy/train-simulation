@@ -21,7 +21,7 @@ import pandas as pd
 from ets_sim import metrics
 from ets_sim.config import load_config, project_path
 from ets_sim.loader import load_processed
-from ets_sim.model import SimParams, params_from_config, simulate, total_slack_s
+from ets_sim.model import SimParams, Supplement, params_from_config, simulate, total_slack_s
 from ets_sim.topology import Topology
 from ets_sim.train import Trip, add_synthetic_trips, apply_buffer, trips_from_frames
 
@@ -34,6 +34,7 @@ class Scenario:
     trips: list[Trip]
     params: SimParams
     threshold_s: float
+    profile_min: tuple[float, ...] = ()  # extra on-time thresholds for benchmarking
 
 
 @dataclass
@@ -51,6 +52,7 @@ def baseline(cfg: dict) -> Scenario:
         trips=trips_from_frames(tt.trips, tt.stop_times),
         params=params_from_config(cfg),
         threshold_s=float(cfg["metrics"]["late_threshold_min"]) * 60,
+        profile_min=tuple(float(t) for t in cfg["metrics"].get("benchmark_thresholds_min", [])),
     )
 
 
@@ -58,7 +60,7 @@ def run_replications(sc: Scenario, n_reps: int, base_seed: int, keep_frames: boo
     rows, evs, incs = [], [], []
     for r in range(n_reps):
         res = simulate(sc.topo, sc.trips, sc.params, seed=base_seed + r)
-        row = metrics.summary(res.events, res.increments, sc.threshold_s)
+        row = metrics.summary(res.events, res.increments, sc.threshold_s, sc.profile_min)
         row["rep"] = r
         rows.append(row)
         if keep_frames:
@@ -134,6 +136,48 @@ def frequency_stress(sc: Scenario, extra_trips: list[int], offset_min: float, ta
     return out
 
 
+def timetable_supplements(sc: Scenario) -> pd.DataFrame:
+    """Scheduled running time against the idealised minimum at line speed, per stop-to-stop leg,
+    grouped by section. supplement_pct = (scheduled - minimum) / minimum, the quantity that
+    UIC 451-1 and ProRail prescribe (a few per cent). Large values mean the minimum is
+    unrealistic (acceleration, speed limits and shared track are not modelled), not that the
+    timetable is generous."""
+    rows = []
+    for t in sc.trips:
+        for a, b in zip(t.stops, t.stops[1:]):
+            path = sc.topo.path(a.station, b.station)
+            km = sum(sc.topo.section_km(x, y) for x, y in zip(path, path[1:]))
+            rows.append((a.station, b.station, km, b.arr_s - a.dep_s, km / sc.params.line_speed_kmh * 3600))
+    d = pd.DataFrame(rows, columns=["from_station", "to_station", "km", "sched_s", "min_s"])
+    g = d.groupby(["from_station", "to_station"]).agg(trips=("km", "size"), km=("km", "first"),
+                                                     sched_min=("sched_s", "median"), min_min=("min_s", "first"))
+    g[["sched_min", "min_min"]] /= 60
+    g["supplement_pct"] = (g["sched_min"] - g["min_min"]) / g["min_min"] * 100
+    g["avg_speed_kmh"] = g["km"] / (g["sched_min"] / 60)
+    return g.sort_values("supplement_pct").reset_index()
+
+
+def recovery_benchmark(sc: Scenario, benchmarks: dict[str, list[float]], n_reps: int, seed: int) -> pd.DataFrame:
+    """Experiment 5: how much do results depend on the recovery model?
+
+    'line speed' is the v1 model. Each benchmark is [pct, minutes per 100 km]: the late train
+    may win back only that running time supplement, as UIC 451-1 or ProRail would plan it.
+    Reported with on-time % at the benchmark thresholds (SBB/NS 3 min and so on).
+    """
+    cases = [("line speed (v1)", None)] + [(name, Supplement(float(v[0]), float(v[1])))
+                                           for name, v in benchmarks.items()]
+    rows = []
+    for name, sup in cases:
+        params = replace(sc.params, running_supplement_pct=sup.pct if sup else None,
+                         supplement_min_per_100km=sup.per_100km_min if sup else 0.0)
+        slack_s, infeasible = total_slack_s(sc.trips, sc.topo, params.line_speed_kmh, params.supplement)
+        rep = run_replications(replace(sc, params=params), n_reps, seed, keep_frames=False)
+        cols = HEADLINE + [c for c in rep.summary.columns if c.startswith("on_time_") and c.endswith("min_pct")]
+        rows.append(_ci_row({"recovery_model": name, "total_slack_min": slack_s / 60,
+                             "blocks_below_min_time": infeasible}, rep.summary, cols))
+    return pd.DataFrame(rows)
+
+
 def block_length_sensitivity(sc: Scenario, stations: pd.DataFrame, block_km: list[float], n_reps: int,
                              seed: int) -> pd.DataFrame:
     """Extra check: how much do results depend on the assumed fixed-block length?"""
@@ -147,7 +191,7 @@ def block_length_sensitivity(sc: Scenario, stations: pd.DataFrame, block_km: lis
 # ------------------------------------------------------------------ CLI
 
 
-ALL = ("baseline", "buffer", "bottleneck", "speed", "frequency", "blocks")
+ALL = ("baseline", "buffer", "bottleneck", "speed", "frequency", "blocks", "benchmark")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -196,6 +240,10 @@ def main(argv: list[str] | None = None) -> None:
         t0 = time.time()
         tt = load_processed(cfg)
         done("block_length", block_length_sensitivity(sc, tt.stations, ex["block_km_values"], n, seed), t0)
+    if "benchmark" in args.only:
+        t0 = time.time()
+        done("timetable_supplements", timetable_supplements(sc), t0)
+        done("recovery_benchmark", recovery_benchmark(sc, ex["recovery_benchmarks"], n, seed), t0)
     print(f"\nResults written to {out}")
 
 

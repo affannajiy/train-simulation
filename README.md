@@ -52,12 +52,15 @@ python logger/fetch_realtime.py --once                # one realtime poll into d
 | `src/ets_sim/experiments.py` | Seeded replications and the experiments |
 | `src/ets_sim/viz.py` | Plotly figures used by the app |
 | `src/ets_sim/style.py` | Colour and type tokens, Plotly template, app CSS (theme also in `.streamlit/config.toml`) |
+| `src/ets_sim/track.py` | OSM track geometry for the 3D view, station chainages |
+| `src/ets_sim/ride_view.py`, `ride_view.html` | "Ride along" 3D follow camera (MapLibre ground, three.js trains and signals) |
+| `scripts/fetch_track.py` | One-off: builds the track geometry from OpenStreetMap |
 | `src/ets_sim/realtime.py` | Finds logged realtime CSVs locally or on the `realtime-data` branch |
 | `app/streamlit_app.py` | Streamlit front end |
 | `logger/` | Realtime vehicle-position logger |
 | `.github/workflows/realtime_logger.yml` | Hourly logger job |
 | `requirements.txt` / `requirements-dev.txt` | Runtime pins (what the host installs) / plus pytest |
-| `data/snapshots/` | Pinned GTFS feed used for all results (committed) |
+| `data/snapshots/` | Pinned GTFS feed used for all results, and the OSM track geometry (committed) |
 | `data/raw/`, `data/processed/`, `results/` | Generated, not committed |
 | `tests/` | Verification tests |
 | `docs/decisions.md` | Design decision record |
@@ -101,6 +104,16 @@ the same trains (common random numbers). Results are means with 95% confidence i
 | Line speed | 140 vs 160 km/h (idealised sensitivity, not a prediction) | `results/speed_comparison.csv` |
 | Frequency stress | Adds synthetic trips copied from existing patterns | `results/frequency_stress.csv` |
 | Block length | `max_block_km` 2.5, 5, 10 (sensitivity to the block assumption) | `results/block_length.csv` |
+| Benchmark | Recovery model: line speed (v1) vs UIC 451-1 and ProRail running time supplements; ETS timetable supplements per section | `results/recovery_benchmark.csv`, `results/timetable_supplements.csv` |
+| Incident replay | A real incident from `replays` in `config.yaml` as a section outage; start and duration fitted to reported delays | `results/replay_<name>_*.csv` |
+
+Run the replays with `python -m ets_sim.replay` (add `--reps 20` for a faster run).
+
+**Section outages.** A `SectionOutage` closes the track between two stations (one or both
+directions) for a set time, like an overhead line or signalling failure. At the start it takes
+every sub-block of the section ahead of any queuing train. A train already inside the section
+stops at the next sub-block. Waiting for a closed block is recorded as cause `outage` with root
+id `O:<name>`, and trains held up behind it inherit that root as `knock_on`.
 
 ## Realtime logger
 
@@ -190,6 +203,31 @@ Model, 100 replications, placeholder delay parameters (full tables in `results/`
 - **Trains that hold others up most** are the slow overnight Hat Yai trips (1004/1005) and the
   short Ipoh and Batu Gajah services that share the busy Rawang to KL section.
 
+International benchmark (full write-up in [docs/benchmarking.md](docs/benchmarking.md)):
+
+- Against a constant 140 km/h, the ETS timetable holds a median 37% running time supplement;
+  UIC 451-1 and ProRail plan 3-7%. So the line-speed recovery model is too optimistic.
+- With a UIC-style supplement instead (`operations.recovery_model: supplement`), on time at
+  destination falls from 86.8% to about 80%, close to KTMB's reported 80-86% (CNY 2025, 2026)
+  and ÖBB long-distance (81.6%).
+- Under that model a +6 min buffer raises on time at destination from 79.7% to 80.5% (CIs do
+  not overlap). The flat buffer result above is an artefact of the idealised slack.
+- Every run now also reports on-time % at 1, 3, 5, 10 and 15 min (`benchmark_thresholds_min`).
+
+Incident replay: Tiroi to Seremban overhead line outage, 14 Jun 2026 (source and reported
+delays in `config.yaml`, background in [docs/literature_review.md](docs/literature_review.md)):
+
+- **Best fit:** Labu to Seremban closed both ways from 10:20 for 235 min (to 14:15). Mean
+  absolute error over the 8 reported trains is 15.6 min, bias +3.1 min. Errors range from
+  +36 min (9442) to -17.5 min (9428). The start and duration are fitted, not reported, so
+  this is a calibration, not an independent validation.
+- **The model reaches all 8 reported trains and 4 more:** 9510 (same-minute pair with 9524,
+  see decision 16), 9574, and the KL to Ipoh/Batu Gajah services 9052 and 1054 (small delays).
+- **Knock-on is about the size of the outage itself.** With primary delays on (100 reps),
+  the outage gives about 563 train-minutes of direct delay and about 619 (613 to 626) of
+  knock-on: 1.10 minutes of knock-on per minute of direct outage delay, across 12 trains.
+- Caveat: the model uses the 2026-11-20 timetable. The June timetable may have differed.
+
 ## Assumptions
 
 Every value below is in `config.yaml` with an ASSUMPTION comment. None is confirmed by KTMB.
@@ -204,6 +242,10 @@ Every value below is in `config.yaml` with an ASSUMPTION comment. None is confir
 | `experiments.on_time_target_pct` | 80% | Line where the stress test says the network stops coping. |
 | Line speed | 140 km/h service, 160 km/h design | Class 93 figures; 160 km/h is an idealised scenario only. |
 | Track | Double track, one direction per track | Brief decision. |
+| `operations.running_supplement_pct`, `supplement_min_per_100km` | 3%, 1 min/100 km (used when `recovery_model: supplement`) | UIC 451-1 figure for multiple units up to 140 km/h, from secondary sources. Benchmarked at 4% and ProRail 7%. |
+| `replays.*.both_directions` | true for the Tiroi-Seremban replay | An overhead line outage cuts power to both tracks. |
+| Ride along track layout | Two tracks 4.5 m apart either side of the OSM line, left-hand running; signals at block boundaries, 2 aspects | Display only. OSM maps one line; real track spacing and signal positions are not published. |
+| Replay comparison | Reported delay vs peak simulated delay | Reports give delay "as of" a time, not where on the journey. |
 
 ## Limitations
 
@@ -217,9 +259,23 @@ Every value below is in `config.yaml` with an ASSUMPTION comment. None is confir
 - Trains start at their origin without occupying a platform; destinations free the platform on
   arrival.
 - Hat Yai trips (1004/1005) are cut at Padang Besar.
-- Map animation draws straight lines between stations, not the real alignment.
+- The Live line map draws straight lines between stations. The Ride along 3D view uses the real
+  alignment from OpenStreetMap, but for display only: the model still uses GTFS line km, and the
+  easing into and out of stops in that view is visual (the model has no acceleration).
 - Delay distributions are assumed, not calibrated, so results describe the model's behaviour,
   not measured KTMB performance (verification, not validation).
+
+## Ride along (3D view)
+
+Control Room, **Ride along**: follow one train in 3D with chase, side, cab and orbit cameras
+(keys 1 to 4). It starts on the train with the most knock-on delay. **Next hold** jumps to the
+next time that train stops at a red signal, and a caption names the cause and the train ahead.
+Trains move signal by signal from the model's block occupancy log, so a held train really
+stands at the signal for the simulated time. The view needs internet for its map tiles and
+libraries; for a demo, run locally and open it once beforehand so the tiles are cached.
+
+Track geometry (c) OpenStreetMap contributors, available under the Open Database License (ODbL
+1.0). Map tiles (c) Esri. To rebuild the geometry: `python scripts/fetch_track.py`.
 
 ## Contributing notes
 

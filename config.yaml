@@ -9,6 +9,9 @@ data:
   realtime_vehicle_url: "https://api.data.gov.my/gtfs-realtime/vehicle-position/ktmb"
   # Pinned feed used for all reported results. The live feed changes daily.
   snapshot_zip: "data/snapshots/ktmb_gtfs_2026-11-20.zip"
+  # Track geometry for the 3D ride view, built once from OpenStreetMap by scripts/fetch_track.py.
+  # Display only: the model uses GTFS line km. (c) OpenStreetMap contributors, ODbL.
+  track_geojson: "data/snapshots/ets_track_osm.geojson"
   raw_dir: "data/raw"
   processed_dir: "data/processed"
   realtime_dir: "data/realtime"
@@ -62,6 +65,17 @@ operations:
   line_speed_kmh: 140
   # ASSUMPTION: shortest dwell a late train can achieve at an intermediate stop.
   min_dwell_min: 1.0
+  # How much running time a late train can win back (docs/benchmarking.md).
+  #   line_speed  minimum time = distance at line_speed_kmh. Idealised: the ETS timetable then
+  #               holds a median 37% supplement, far above the few per cent planned abroad.
+  #   supplement  minimum time = scheduled time with the supplement below removed, in the
+  #               UIC 451-1 form scheduled = minimum * (1 + pct/100) + per_100km * km / 100,
+  #               never faster than line speed.
+  recovery_model: "line_speed"
+  # ASSUMPTION: UIC 451-1 figure for multiple-unit trains up to 140 km/h as quoted by secondary
+  # sources (3% plus 1 min per 100 km). Used only when recovery_model is "supplement".
+  running_supplement_pct: 3.0
+  supplement_min_per_100km: 1.0
 
 primary_delay:
   # ASSUMPTION: all values below are placeholders, to be fitted from the realtime logs.
@@ -78,6 +92,9 @@ primary_delay:
 metrics:
   # A train is late at a stop if it is more than this many minutes behind schedule.
   late_threshold_min: 5
+  # Extra on-time thresholds reported for comparison with other operators: 3 min SBB and NS
+  # (from 2025), 5 min Renfe and the old NS measure, 10 min NS large delay, 15 min Renfe/NS old.
+  benchmark_thresholds_min: [1, 3, 5, 10, 15]
 
 experiments:
   replications: 100
@@ -93,6 +110,44 @@ experiments:
   # ASSUMPTION: on-time target used to mark where the network stops coping.
   on_time_target_pct: 80
   block_km_values: [2.5, 5.0, 10.0]
+  # Recovery benchmark: [running time supplement %, minutes per 100 km]. ASSUMPTION values from
+  # secondary sources; see docs/benchmarking.md.
+  recovery_benchmarks:
+    "UIC 451-1 MU <=140 km/h (3% + 1 min/100 km)": [3.0, 1.0]
+    "UIC 451-1 MU 141-160 km/h (4% + 1 min/100 km)": [4.0, 1.0]
+    "ProRail NL (7%)": [7.0, 0.0]
+
+replays:
+  # Real incidents replayed as section outages: no train may enter the section from the
+  # start time for the duration. News reports give the affected trains and their delays but
+  # not the start time or duration, so those two are fitted to the reported delays by grid
+  # search (python -m ets_sim.replay). Times are HH:MM on the service day.
+  tiroi_seremban_2026_06_14:
+    source: "Malay Mail / Bernama, 14 Jun 2026, 'ETS back on track after power outage, but eight services running late'"
+    cause: "Overhead line equipment outage at KM 458.872 between Tiroi and Seremban"
+    # Tiroi is not an ETS stop. It lies inside the ETS section Labu - Seremban.
+    from_station: "LABU"
+    to_station: "SEREMBAN"
+    # ASSUMPTION: an overhead line outage cuts power to both tracks.
+    both_directions: true
+    # Delays as reported at 15:30, in minutes, keyed by trip_id (EX9573 is trip 9573).
+    # ASSUMPTION: compared with each train's peak simulated delay. The model uses the
+    # 2026-11-20 timetable; the June timetable may have differed.
+    reported_delay_min:
+      "9573": 214
+      "9442": 171
+      "9524": 155
+      "9323": 131
+      "9326": 100
+      "9343": 74
+      "9575": 60
+      "9428": 25
+    fit:
+      start_from: "09:30"
+      start_to: "11:30"
+      duration_from_min: 120
+      duration_to_min: 300
+      step_min: 5
 
 realtime_logger:
   poll_interval_s: 60

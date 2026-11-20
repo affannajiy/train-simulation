@@ -44,6 +44,23 @@ def on_time(events: pd.DataFrame, threshold_s: float) -> dict[str, float]:
     }
 
 
+def punctuality_profile(events: pd.DataFrame, thresholds_min: list[float]) -> dict[str, float]:
+    """On-time % at several thresholds, to compare with operators that use other definitions
+    (for example SBB and NS 3 min, KTMB unknown). Same rule as on_time: on time if the delay
+    is at most the threshold. Delays are continuous, so "under" and "at most" barely differ.
+
+    Keys: on_time_dest_<t>min_pct (destinations) and on_time_all_<t>min_pct (every stop).
+    """
+    arr = _arrivals(events)
+    dest = arr[arr["is_destination"]]
+    out = {}
+    for t in thresholds_min:
+        tag = f"{t:g}min"
+        out[f"on_time_dest_{tag}_pct"] = 100.0 * float((dest["delay_s"] <= t * 60).mean()) if len(dest) else math.nan
+        out[f"on_time_all_{tag}_pct"] = 100.0 * float((arr["delay_s"] <= t * 60).mean()) if len(arr) else math.nan
+    return out
+
+
 def station_delay(events: pd.DataFrame) -> pd.DataFrame:
     """Average and maximum arrival delay per station, in minutes."""
     arr = _arrivals(events)
@@ -57,6 +74,7 @@ def delay_by_cause(increments: pd.DataFrame) -> dict[str, float]:
     s = increments.groupby("cause")["amount_s"].sum() / 60
     return {
         "primary_min": float(s.get("primary", 0.0)),
+        "outage_min": float(s.get("outage", 0.0)),
         "knock_on_min": float(s.get("knock_on", 0.0)),
         "timetable_conflict_min": float(s.get("timetable_conflict", 0.0)),
         "recovered_min": float(-s.get("recovery", 0.0)),
@@ -81,6 +99,25 @@ def primary_impact(increments: pd.DataFrame) -> pd.DataFrame:
     out = base.join(spread, how="left").fillna({"knock_on_min": 0.0, "trains_affected": 0})
     out["trains_affected"] = out["trains_affected"].astype(int)
     return out.reset_index()
+
+
+def incident_reach(events: pd.DataFrame, increments: pd.DataFrame, root_id: str) -> pd.DataFrame:
+    """Every train one root cause reached, with the minutes it received and its peak delay.
+
+    direct_min is delay received straight from the root (cause primary or outage), knock_on_min
+    is delay passed on by other trains. One replication only. Sorted by peak delay.
+    """
+    inc = increments[(increments["root_id"] == root_id) & (increments["amount_s"] > 0)]
+    if inc.empty:
+        return pd.DataFrame(columns=["trip_id", "direct_min", "knock_on_min", "peak_delay_min"])
+    direct = inc["cause"].isin(["primary", "outage"])
+    out = pd.DataFrame({
+        "direct_min": inc[direct].groupby("trip_id")["amount_s"].sum() / 60,
+        "knock_on_min": inc[~direct].groupby("trip_id")["amount_s"].sum() / 60,
+    }).fillna(0.0)
+    out["peak_delay_min"] = events.groupby("trip_id")["delay_s"].max().reindex(out.index) / 60
+    out.index.name = "trip_id"
+    return out.sort_values("peak_delay_min", ascending=False).reset_index()
 
 
 def bottlenecks(increments: pd.DataFrame, n_reps: int = 1) -> pd.DataFrame:
@@ -119,9 +156,12 @@ def train_impact(increments: pd.DataFrame, n_reps: int = 1) -> pd.DataFrame:
     return out.sort_values("minutes_passed_on", ascending=False).reset_index()
 
 
-def summary(events: pd.DataFrame, increments: pd.DataFrame, threshold_s: float) -> dict[str, float]:
-    """One row of headline numbers for a single replication."""
+def summary(events: pd.DataFrame, increments: pd.DataFrame, threshold_s: float,
+            profile_min: tuple[float, ...] = ()) -> dict[str, float]:
+    """One row of headline numbers for a single replication. profile_min adds on-time % at
+    those extra thresholds (see punctuality_profile)."""
     out = on_time(events, threshold_s)
+    out.update(punctuality_profile(events, list(profile_min)))
     arr = _arrivals(events)
     dest = arr[arr["is_destination"]]
     out["avg_dest_delay_min"] = float(dest["delay_s"].mean() / 60) if len(dest) else math.nan

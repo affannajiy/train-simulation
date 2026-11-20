@@ -25,6 +25,12 @@ class Trip:
     stops: tuple[Stop, ...]
     international: bool = False
     synthetic: bool = False  # added by the frequency stress test
+    # Scheduled running time per leg in the published timetable, kept when a buffer is added,
+    # so a supplement-based minimum running time stays physical. Empty: use the current times.
+    base_run_s: tuple[float, ...] = ()
+
+    def leg_run_s(self) -> tuple[float, ...]:
+        return tuple(b.arr_s - a.dep_s for a, b in zip(self.stops, self.stops[1:]))
 
     @property
     def origin(self) -> str:
@@ -58,7 +64,7 @@ def apply_buffer(trip: Trip, buffer_s: float) -> Trip:
     """
     if buffer_s == 0:
         return trip
-    runs = [b.arr_s - a.dep_s for a, b in zip(trip.stops, trip.stops[1:])]
+    runs = list(trip.leg_run_s())
     total = sum(runs)
     if total <= 0:
         raise ValueError(f"Trip {trip.trip_id} has no running time to spread a buffer over")
@@ -67,7 +73,7 @@ def apply_buffer(trip: Trip, buffer_s: float) -> Trip:
     for stop, run in zip(trip.stops[1:], runs):
         shift += buffer_s * run / total
         stops.append(Stop(stop.station, stop.arr_s + shift, stop.dep_s + shift))
-    return replace(trip, stops=tuple(stops))
+    return replace(trip, stops=tuple(stops), base_run_s=trip.base_run_s or tuple(runs))
 
 
 def shifted_copy(trip: Trip, offset_s: float, new_id: str) -> Trip:

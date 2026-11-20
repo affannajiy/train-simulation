@@ -5,6 +5,8 @@ Two tables come out of every run:
 events      one row per train per station: scheduled vs actual time (arr, dep or pass).
 increments  one row per change in a train's delay, with its cause:
               primary             a sampled (or forced) disruption at a departure
+              outage              waiting for a block that a section outage held (root id
+                                  "O:<name>"); the train first held up by the incident
               knock_on            waiting for a block or platform held by a delayed train
               timetable_conflict  waiting behind a train that is itself on time, so the
                                   timetable itself does not leave enough room
@@ -110,6 +112,19 @@ def attribute_wait(log: EventLog, victim_id: str, victim: DelayLedger, blocker_i
         victim.add(root, rest)
         log.increment(victim_id, time_s, location, location_type, "timetable_conflict", rest, root,
                       blocker_id)
+
+
+def attribute_outage(log: EventLog, victim_id: str, victim: DelayLedger, root_id: str, wait_s: float,
+                     time_s: float, location: str, location_type: str) -> None:
+    """Record a wait for a block a section outage held. The whole wait belongs to the outage.
+
+    Simplification: if the train was already queuing behind another train when the outage
+    began, that part of the wait is also counted as outage.
+    """
+    if wait_s <= _EPS:
+        return
+    victim.add(root_id, wait_s)
+    log.increment(victim_id, time_s, location, location_type, "outage", wait_s, root_id)
 
 
 def record_recovery(log: EventLog, trip_id: str, ledger: DelayLedger, seconds: float, time_s: float,

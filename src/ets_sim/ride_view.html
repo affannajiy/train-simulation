@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ride along</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.css">
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<style>
+:root{--bg:__BG__;--panel:__PANEL__;--rule:__RULE__;--text:__TEXT__;--muted:__MUTED__;--faint:__FAINT__;
+  --orange:__ORANGE__;--orange-hover:__ORANGE_HOVER__;--ontime:__ON_TIME__;--major:__MAJOR__;
+  --sans:"Inter Tight",Inter,system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.4 var(--sans);overflow:hidden}
+#wrap{position:relative;width:100%;height:100%}
+#map{position:absolute;inset:0;background:#1c1c1c}
+#map.orbit{cursor:grab}
+.panel{position:absolute;background:rgba(13,13,13,.82);border:1px solid var(--rule);border-radius:8px;
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+#hud{top:10px;left:10px;padding:8px 10px;max-width:calc(100% - 20px)}
+#trip{background:var(--panel);color:var(--text);border:1px solid var(--rule);border-radius:6px;padding:4px 6px;
+  font:12px var(--sans);max-width:100%}
+.stats{display:flex;gap:16px;margin-top:8px;flex-wrap:wrap}
+.stats div{display:flex;flex-direction:column;min-width:56px}
+.stats b{font:600 16px var(--mono);font-variant-numeric:tabular-nums}
+.stats span{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+#caption{top:10px;right:10px;width:min(380px,calc(100% - 20px));padding:10px 12px;border-left:3px solid var(--orange)}
+#caption .k{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--orange);margin-bottom:2px}
+#bar{left:10px;right:10px;bottom:30px;padding:6px 8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+#bar button{background:var(--panel);color:var(--text);border:1px solid var(--rule);border-radius:6px;padding:4px 9px;
+  font:500 12px var(--sans);cursor:pointer}
+#bar button:hover{border-color:var(--muted)}
+#bar button.on{background:var(--orange);border-color:var(--orange);color:var(--bg)}
+#bar button:focus-visible,#trip:focus-visible,#scrub:focus-visible{outline:2px solid var(--orange);outline-offset:1px}
+#bar .sep{width:1px;height:20px;background:var(--rule);margin:0 2px}
+#scrub{flex:1 1 160px;min-width:120px;accent-color:var(--orange)}
+#foot{position:absolute;left:10px;right:10px;bottom:6px;display:flex;justify-content:space-between;gap:12px;
+  font-size:10px;color:var(--muted);pointer-events:none}
+#foot a{color:var(--muted)}
+#msg{top:50%;left:50%;transform:translate(-50%,-50%);padding:14px 18px;max-width:420px;text-align:center;display:none}
+#warn{left:50%;bottom:76px;transform:translateX(-50%);padding:5px 10px;font-size:11px;color:var(--muted);display:none}
+.lbl{position:absolute;transform:translate(-50%,-100%);white-space:nowrap;pointer-events:none;font:500 11px var(--mono);
+  padding:1px 5px;border-radius:4px;background:rgba(13,13,13,.75);border:1px solid var(--rule);display:none}
+.lbl.st{font:500 11px var(--sans);color:var(--muted);background:rgba(13,13,13,.6)}
+.lbl.me{border-color:var(--orange)}
+</style></head><body>
+<div id="wrap">
+  <div id="map" aria-label="3D view following one train"></div>
+  <div id="labels"></div>
+  <div id="hud" class="panel">
+    <label class="sr" for="trip" style="position:absolute;left:-9999px">Train to follow</label>
+    <select id="trip" title="Train to follow. Sorted by knock-on delay, most first."></select>
+    <div class="stats">
+      <div><b id="clock">--:--</b><span>Clock</span></div>
+      <div><b id="delay">0</b><span>Delay, min</span></div>
+      <div><b id="speed">0</b><span>km/h</span></div>
+      <div><b id="next">-</b><span>Next stop</span></div>
+    </div>
+  </div>
+  <div id="caption" class="panel" hidden><div class="k">Why it stopped</div><div id="captext"></div></div>
+  <div id="bar" class="panel" role="toolbar" aria-label="Playback and camera">
+    <button id="play" title="Play or pause (Space)">Pause</button>
+    <button data-speed="1">1x</button><button data-speed="10">10x</button>
+    <button data-speed="60">60x</button><button data-speed="300">300x</button>
+    <button id="hold" title="Jump to just before this train's next hold (N)">Next hold &rsaquo;</button>
+    <input id="scrub" type="range" min="0" max="1" step="1" aria-label="Time">
+    <span class="sep"></span>
+    <button data-cam="chase" title="Key 1">Chase</button><button data-cam="side" title="Key 2">Side</button>
+    <button data-cam="cab" title="Key 3">Cab</button><button data-cam="orbit" title="Key 4. Drag to turn, scroll to zoom">Orbit</button>
+  </div>
+  <div id="warn" class="panel">Map tiles unavailable (offline?). The track, signals and trains still run.</div>
+  <div id="msg" class="panel"></div>
+  <div id="foot">
+    <span>Display only: trains ease in and out of stops; the model has no acceleration. Times at each signal are exact.</span>
+    <span id="attr"></span>
+  </div>
+</div>
+<script>window.RIDE = __DATA__;</script>
+<script type="module">
+const D = window.RIDE;
+const $ = (id) => document.getElementById(id);
+function fail(text) { const m = $("msg"); m.textContent = text; m.style.display = "block"; }
+if (typeof maplibregl === "undefined") {
+  fail("The 3D view needs internet access to load its map library. Run with a connection, or use the Live line map.");
+  throw new Error("maplibre missing");
+}
+let THREE;
+try { THREE = await import("https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js"); }
+catch (e) { fail("The 3D view could not load three.js (offline?). Use the Live line map instead."); throw e; }
+
+// ------------------------------------------------------------------ constants
+const TRACK_OFF = 2.25;      // each track sits this far left of the OSM centre line (left-hand running)
+const CAR_PITCH = 23.3, NOSE = 11.6, NCARS = 6, RAIL_Z = 0.5;
+const NEAR_R = 6000, SLEEPER_R = 1500, RECENTER_M = 600, TRAIN_R = 8000;
+const SIG_AHEAD = 12;        // metres; display only
+const RAMP = 55;             // display easing into and out of a stop, seconds (visual only)
+const PRE = 600, POST = 300;
+const LATE = D.late, MAJOR = D.major;
+$("attr").innerHTML = "Map tiles &copy; Esri &middot; " + D.attrib;
+
+// ------------------------------------------------------------------ track lookup
+// Extend every line 300 m straight past both ends, so a train standing at a terminus has
+// somewhere to put its cars and the chase camera has track behind it.
+const EXT = 300;
+const LINES = D.lines.map((L) => {
+  const n = L.x.length, x = [...L.x], y = [...L.y], c = [...L.c];
+  const ext = (i, j, sgn) => {  // continue segment j->i past i by EXT metres
+    const f = EXT / Math.max(1, Math.abs(c[i] - c[j]));
+    return [x[i] + (x[i] - x[j]) * f, y[i] + (y[i] - y[j]) * f, c[i] + sgn * EXT];
+  };
+  const a = ext(0, 1, -1), b = ext(n - 1, n - 2, 1);
+  return {x: [a[0], ...x, b[0]], y: [a[1], ...y, b[1]], c: [a[2], ...c, b[2]]};
+});
+function sample(li, ch) {
+  const L = LINES[li], c = L.c, n = c.length;
+  ch = Math.max(c[0], Math.min(c[n - 1], ch));
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (c[m] <= ch) lo = m; else hi = m; }
+  const f = (ch - c[lo]) / Math.max(1e-6, c[hi] - c[lo]);
+  return [L.x[lo] + f * (L.x[hi] - L.x[lo]), L.y[lo] + f * (L.y[hi] - L.y[lo])];
+}
+let O = null, MPU = 1;
+function setOrigin(ll) { O = maplibregl.MercatorCoordinate.fromLngLat(ll, 0); MPU = O.meterInMercatorCoordinateUnits(); }
+function merc(ll) { const m = maplibregl.MercatorCoordinate.fromLngLat(ll, 0); return [m.x, m.y]; }
+function local(ll) { const m = merc(ll); return [(m[0] - O.x) / MPU, -(m[1] - O.y) / MPU]; }
+// Point on the track, `lat` metres left of the direction of travel sgn, with that direction.
+function trackPt(li, ch, sgn, lat) {
+  const a = local(sample(li, ch - 2 * sgn)), b = local(sample(li, ch + 2 * sgn)), p = local(sample(li, ch));
+  let fx = b[0] - a[0], fy = b[1] - a[1]; const n = Math.hypot(fx, fy) || 1; fx /= n; fy /= n;
+  return {x: p[0] - fy * lat, y: p[1] + fx * lat, fx, fy};
+}
+
+// ------------------------------------------------------------------ trips
+const TRIPS = D.trips.map((t) => {
+  const K = t.k, n = K.length, ein = new Uint8Array(n), eout = new Uint8Array(n);
+  const same = (a, b) => a[1] === b[1] && a[2] === b[2];
+  for (let i = 0; i + 1 < n; i++) {
+    if (same(K[i], K[i + 1]) || K[i][1] !== K[i + 1][1]) continue;
+    ein[i] = i === 0 || same(K[i - 1], K[i]) ? 1 : 0;
+    eout[i] = i + 2 >= n || same(K[i + 1], K[i + 2]) ? 1 : 0;
+  }
+  return {...t, ein, eout, t0: K[0][0] - PRE, t1: K[n - 1][0] + POST};
+});
+const BY_ID = Object.fromEntries(TRIPS.map((t) => [t.id, t]));
+function stateAt(T, t) {
+  const K = T.k, n = K.length;
+  if (t < T.t0 || t > T.t1) return null;
+  if (t <= K[0][0]) return {li: K[0][1], ch: K[0][2], s: K[0][3], v: 0};
+  if (t >= K[n - 1][0]) return {li: K[n - 1][1], ch: K[n - 1][2], s: K[n - 1][3], v: 0};
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (K[m][0] <= t) lo = m; else hi = m; }
+  const a = K[lo], b = K[lo + 1];
+  if (a[1] !== b[1] || a[2] === b[2]) return {li: a[1], ch: a[2], s: a[3], v: 0};
+  const dur = b[0] - a[0], dist = b[2] - a[2], tau = t - a[0];
+  const rin = T.ein[lo] ? Math.min(RAMP, dur / 2) : 0, rout = T.eout[lo] ? Math.min(RAMP, dur / 2) : 0;
+  const vm = 1 / (dur - rin / 2 - rout / 2);
+  let f, v;
+  if (tau < rin) { f = 0.5 * vm / rin * tau * tau; v = vm * tau / rin; }
+  else if (tau < dur - rout) { f = vm * rin / 2 + vm * (tau - rin); v = vm; }
+  else { const r = dur - tau; f = 1 - 0.5 * vm / rout * r * r; v = vm * r / rout; }
+  return {li: a[1], ch: a[2] + dist * f, s: a[3], v: Math.abs(dist) * v};
+}
+const lastAt = (rows, t) => { let lo = -1, hi = rows.length; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (rows[m][0] <= t) lo = m; else hi = m; } return lo; };
+function delayAt(T, t) {
+  const i = lastAt(T.d, t); let d = i < 0 ? 0 : T.d[i][1];
+  const h = T.h.find((x) => x[3] && x[0] <= t && t < x[1]);  // a wait still going on
+  return h ? d + (t - h[0]) : d;
+}
+function nextStop(T, t) { const i = lastAt(T.st, t) + 1; return i < T.st.length ? T.st[i][1] : "-"; }
+const clock = (s) => { s = ((Math.round(s) % 86400) + 86400) % 86400;
+  const p = (v) => String(v).padStart(2, "0"); return p(Math.floor(s / 3600)) + ":" + p(Math.floor(s / 60) % 60) + ":" + p(s % 60); };
+const delayColor = (sec) => sec / 60 >= MAJOR ? "var(--major)" : sec / 60 >= LATE ? "var(--orange)" : "var(--ontime)";
+
+// ------------------------------------------------------------------ map
+const startTrip = BY_ID[D.follow] || TRIPS[0];
+if (!startTrip) { fail("No train ran in this scenario."); throw new Error("no trips"); }
+const st0 = stateAt(startTrip, startTrip.k[0][0]);
+let map;
+try {
+  map = new maplibregl.Map({
+    container: "map", center: sample(st0.li, st0.ch), zoom: 16, pitch: 80, maxPitch: 89, maxZoom: 24,
+    interactive: false, attributionControl: false, fadeDuration: 0, canvasContextAttributes: {antialias: true},
+    style: {version: 8,
+      sources: {base: {type: "raster", tileSize: 256, maxzoom: 16,
+        tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"]},
+        track: {type: "geojson", data: {type: "FeatureCollection", features: LINES.map((L) => ({type: "Feature", properties: {},
+          geometry: {type: "LineString", coordinates: L.x.map((x, i) => [x, L.y[i]])}}))}}},
+      sky: {"sky-color": "#1d2738", "horizon-color": "#59606b", "fog-color": "#2b3038",
+            "sky-horizon-blend": 0.5, "horizon-fog-blend": 0.7, "fog-ground-blend": 0.35},
+      layers: [{id: "bg", type: "background", paint: {"background-color": "#1c1c1c"}},
+        {id: "base", type: "raster", source: "base", paint: {"raster-brightness-min": 0.08}},
+        {id: "track", type: "line", source: "track", paint: {"line-color": "#6e6e73",
+          "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1, 14, 2, 18, 4]}}]}
+  });
+} catch (e) { fail("The 3D view needs WebGL, which this browser has turned off."); throw e; }
+let tileErrors = 0;
+map.on("error", (e) => { if (e && e.sourceId === "base" && ++tileErrors > 3) $("warn").style.display = "block"; });
+
+// ------------------------------------------------------------------ three.js objects
+const MAT = {
+  body: new THREE.MeshStandardMaterial({color: 0xf2f2ef, roughness: .45, metalness: .1}),
+  band: new THREE.MeshStandardMaterial({color: 0x1b2130, roughness: .3, metalness: .2}),
+  stripe: new THREE.MeshStandardMaterial({color: 0x2b4a8a, roughness: .5}),     // placeholder livery
+  under: new THREE.MeshStandardMaterial({color: 0x2a2a2c, roughness: .8}),
+  bogie: new THREE.MeshStandardMaterial({color: 0x161618, roughness: .9}),
+  glass: new THREE.MeshStandardMaterial({color: 0x0e131c, roughness: .15, metalness: .4}),
+  head: new THREE.MeshBasicMaterial({color: 0xfff6dc}),
+  tail: new THREE.MeshBasicMaterial({color: 0xff2a2a}),
+  ballast: new THREE.MeshStandardMaterial({color: 0x5d5853, roughness: 1, side: THREE.DoubleSide}),
+  rail: new THREE.MeshStandardMaterial({color: 0xa7adb3, roughness: .35, metalness: .7, side: THREE.DoubleSide}),
+  sleeper: new THREE.MeshStandardMaterial({color: 0x77726b, roughness: 1}),
+  platform: new THREE.MeshStandardMaterial({color: 0x8c8a86, roughness: .9}),
+  edge: new THREE.MeshStandardMaterial({color: 0xd9b310, roughness: .7}),
+  post: new THREE.MeshStandardMaterial({color: 0x3a3a3c, roughness: .7}),
+  sighead: new THREE.MeshStandardMaterial({color: 0x0c0c0c, roughness: .6}),
+};
+// Extrude a side profile (u along the car, v up) across the car width; car frame: +y forward, +z up.
+function profile(pts, width) {
+  const sh = new THREE.Shape(); sh.moveTo(pts[0][0], pts[0][1]);
+  for (const p of pts.slice(1)) sh.lineTo(p[0], p[1]);
+  sh.closePath();
+  const g = new THREE.ExtrudeGeometry(sh, {depth: width, bevelEnabled: false});
+  g.applyMatrix4(new THREE.Matrix4().set(0, 0, 1, -width / 2, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1));
+  g.computeVertexNormals();
+  return g;
+}
+function box(w, l, h, x, y, z) { const g = new THREE.BoxGeometry(w, l, h); g.translate(x, y, z); return g; }
+function beam(a, b, t) {  // thin box from point a to point b (pantograph arms)
+  const d = new THREE.Vector3().subVectors(b, a), g = new THREE.BoxGeometry(t, t, d.length());
+  const m = new THREE.Mesh(g, MAT.under); m.position.copy(a).addScaledVector(d, .5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), d.normalize()); return m;
+}
+const GEO = {
+  body: profile([[-11.25, 1.0], [11.25, 1.0], [11.25, 4.05], [-11.25, 4.05]], 2.9),
+  endBody: profile([[-11.25, 1.0], [9.4, 1.0], [11.6, 1.45], [11.6, 2.1], [10.5, 3.1], [7.4, 4.05], [-11.25, 4.05]], 2.9),
+  band: profile([[-10.4, 2.55], [10.4, 2.55], [10.4, 3.3], [-10.4, 3.3]], 2.94),
+  endBand: profile([[-10.4, 2.55], [7.2, 2.55], [7.2, 3.3], [-10.4, 3.3]], 2.94),
+  stripe: profile([[-11.25, 1.55], [11.25, 1.55], [11.25, 1.85], [-11.25, 1.85]], 2.94),
+  endStripe: profile([[-11.25, 1.55], [11.63, 1.55], [11.63, 1.85], [-11.25, 1.85]], 2.94),
+  screen: profile([[10.18, 2.94], [10.27, 3.22], [8.35, 3.81], [8.26, 3.53]], 2.5),
+  roof: box(2.3, 21.6, .22, 0, 0, 4.15),
+  skirt: box(2.6, 22.0, .3, 0, 0, .9),
+  endSkirt: box(2.6, 20.0, .3, 0, -1, .9),
+  bogie: box(2.5, 3.2, .75, 0, 0, .5),
+  gang: box(2.4, .5, 2.6, 0, 0, 2.5),
+  lamp: box(.32, .06, .22, 0, 0, 0),
+};
+function makeCar(end, panto) {
+  const g = new THREE.Group(), inner = new THREE.Group(); g.add(inner);
+  const add = (geo, mat) => { const m = new THREE.Mesh(geo, mat); inner.add(m); return m; };
+  add(end ? GEO.endBody : GEO.body, MAT.body); add(end ? GEO.endBand : GEO.band, MAT.band);
+  add(end ? GEO.endStripe : GEO.stripe, MAT.stripe); add(end ? GEO.endSkirt : GEO.skirt, MAT.under);
+  add(GEO.roof, MAT.body);
+  for (const y of [-7.6, 7.6]) add(GEO.bogie, MAT.bogie).position.y = y;
+  if (end) {
+    add(GEO.screen, MAT.glass);
+    for (const x of [-.95, .95]) { const l = add(GEO.lamp, MAT.head); l.position.set(x, 11.62, 1.72); }
+    add(GEO.gang, MAT.under).position.y = -11.45;
+  } else { for (const y of [-11.45, 11.45]) add(GEO.gang, MAT.under).position.y = y; }
+  if (panto) {
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    inner.add(beam(V(0, -.8, 4.3), V(0, .5, 5.0), .08), beam(V(0, .5, 5.0), V(0, -.3, 5.6), .06));
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(1.8, .12, .06), MAT.under); bar.position.set(0, -.3, 5.62); inner.add(bar);
+  }
+  return {g, inner};
+}
+function makeTrain() {  // one function, so a .glb could replace it later
+  const group = new THREE.Group(), cars = [];
+  for (let i = 0; i < NCARS; i++) {
+    const c = makeCar(i === 0 || i === NCARS - 1, i === 1 || i === NCARS - 2);
+    if (i === NCARS - 1) {  // rear unit faces backwards; its lamps are tail lamps
+      c.inner.rotation.z = Math.PI;
+      c.inner.traverse((o) => { if (o.material === MAT.head) o.material = MAT.tail; });
+    }
+    group.add(c.g); cars.push(c.g);
+  }
+  return {group, cars};
+}
+
+// Sweep a cross-section profile [[lateral, z], ...] along a local polyline; returns position array.
+function sweep(pts, prof, out) {
+  const n = pts.length; if (n < 2) return;
+  const nx = new Float64Array(n), ny = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    let fx = b[0] - a[0], fy = b[1] - a[1]; const l = Math.hypot(fx, fy) || 1;
+    nx[i] = -fy / l; ny[i] = fx / l;
+  }
+  for (let i = 0; i + 1 < n; i++) for (let j = 0; j + 1 < prof.length; j++) {
+    const P = (k, q) => [pts[k][0] + nx[k] * prof[q][0], pts[k][1] + ny[k] * prof[q][0], prof[q][1]];
+    const a = P(i, j), b = P(i, j + 1), c = P(i + 1, j), d = P(i + 1, j + 1);
+    out.push(...a, ...c, ...b, ...b, ...c, ...d);
+  }
+}
+function meshFrom(arr, mat) {
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(arr, 3));
+  g.computeVertexNormals(); return new THREE.Mesh(g, mat);
+}
+function trackProfiles(off) {
+  const r = (c) => [[c - .04, .32], [c - .04, .5], [c + .04, .5], [c + .04, .32]];
+  return {ballast: [[off - 2.4, 0.02], [off - 1.7, .32], [off + 1.7, .32], [off + 2.4, 0.02]],
+          rails: [r(off - .7175), r(off + .7175)]};
+}
+
+const scene = new THREE.Scene();
+scene.add(new THREE.HemisphereLight(0xdfe6f0, 0x303030, 2.2));
+const sun = new THREE.DirectionalLight(0xffffff, 2.0); sun.position.set(60, -40, 120); scene.add(sun);
+const nearGroup = new THREE.Group(); scene.add(nearGroup);
+const TRAIN_POOL = Array.from({length: 10}, () => { const t = makeTrain(); t.group.visible = false; scene.add(t.group); return t; });
+
+// Signals: post, head, one lamp that turns red while its block is occupied.
+const SIG_POOL = Array.from({length: 48}, () => {
+  const g = new THREE.Group();
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(.09, .09, 5, 8), MAT.post);
+  post.rotation.x = Math.PI / 2; post.position.z = 2.5; g.add(post);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(.5, .3, 1.1), MAT.sighead); head.position.set(0, 0, 5.2); g.add(head);
+  const lampMat = new THREE.MeshBasicMaterial({color: 0x22ff66});
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(.16, 12, 8), lampMat); lamp.position.set(0, -.17, 5.35); g.add(lamp);
+  g.visible = false; scene.add(g);
+  return {g, lampMat, sig: null};
+});
+const SIGNALS = D.signals;  // [line, chainage, sign, [t_in, t_out, ...]]
+function signalRed(sg, t) {
+  const iv = sg[3]; let lo = -1, hi = iv.length / 2;
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (iv[2 * m] <= t) lo = m; else hi = m; }
+  return lo >= 0 && t < iv[2 * lo + 1];
+}
+
+// ------------------------------------------------------------------ near-field rebuild
+let nearStations = [];
+function buildNear() {
+  for (const m of [...nearGroup.children]) { nearGroup.remove(m); m.geometry.dispose(); }
+  const ballast = [], rails = [], sleepers = [];
+  LINES.forEach((L, li) => {
+    const pts = L.x.map((x, i) => local([x, L.y[i]]));
+    let run = [];
+    const flush = () => {
+      if (run.length >= 2) {
+        // subdivide long straight pieces so sleepers and ribbons stay on the line
+        for (const off of [TRACK_OFF, -TRACK_OFF]) {
+          const p = trackProfiles(off); sweep(run, p.ballast, ballast); for (const r of p.rails) sweep(run, r, rails);
+        }
+        sleepersAlong(run, sleepers);
+      }
+      run = [];
+    };
+    for (let i = 0; i < pts.length; i++) {
+      const inside = Math.hypot(pts[i][0], pts[i][1]) < NEAR_R
+        || (i > 0 && segNear(pts[i - 1], pts[i])) || (i + 1 < pts.length && segNear(pts[i], pts[i + 1]));
+      if (inside) run.push(pts[i]); else flush();
+    }
+    flush();
+  });
+  if (ballast.length) nearGroup.add(meshFrom(ballast, MAT.ballast));
+  if (rails.length) nearGroup.add(meshFrom(rails, MAT.rail));
+  if (sleepers.length) {
+    const g = new THREE.BoxGeometry(2.6, .26, .14), im = new THREE.InstancedMesh(g, MAT.sleeper, sleepers.length);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), z = new THREE.Vector3(0, 0, 1), s1 = new THREE.Vector3(1, 1, 1);
+    sleepers.forEach((s, i) => { q.setFromAxisAngle(z, s[2]); m4.compose(new THREE.Vector3(s[0], s[1], .37), q, s1); im.setMatrixAt(i, m4); });
+    nearGroup.add(im);
+  }
+  // platforms both sides of every nearby station
+  nearStations = [];
+  for (const s of D.stations) {
+    const p = trackPt(s.l, s.c, 1, 0);
+    if (Math.hypot(p.x, p.y) > NEAR_R) continue;
+    nearStations.push({s, p});
+    const ang = Math.atan2(-p.fx, p.fy);
+    for (const side of [1, -1]) {
+      const off = side * (TRACK_OFF + 1.6 + 2.0);
+      const plat = new THREE.Mesh(new THREE.BoxGeometry(4, 220, 1.0), MAT.platform);
+      plat.position.set(p.x - p.fy * off, p.y + p.fx * off, .5); plat.rotation.z = ang; nearGroup.add(plat);
+      const eoff = side * (TRACK_OFF + 1.65);
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(.15, 220, .02), MAT.edge);
+      edge.position.set(p.x - p.fy * eoff, p.y + p.fx * eoff, 1.01); edge.rotation.z = ang; nearGroup.add(edge);
+    }
+  }
+  // signals near the focus
+  // Drawn SIG_AHEAD past the block boundary, so a train held at the boundary has it in view.
+  const near = SIGNALS.map((sg) => [sg, trackPt(sg[0], sg[1] + sg[2] * SIG_AHEAD, sg[2], TRACK_OFF + 2.4)])
+    .filter(([, p]) => Math.hypot(p.x, p.y) < NEAR_R).slice(0, SIG_POOL.length);
+  SIG_POOL.forEach((P, i) => {
+    if (i >= near.length) { P.g.visible = false; P.sig = null; return; }
+    const [sg, p] = near[i];
+    P.sig = sg; P.g.visible = true; P.g.position.set(p.x, p.y, 0); P.g.rotation.z = Math.atan2(-p.fx, p.fy);
+  });
+}
+function segNear(a, b) {  // segment passes within NEAR_R of the origin
+  const dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, -(a[0] * dx + a[1] * dy) / l2));
+  return Math.hypot(a[0] + t * dx, a[1] + t * dy) < NEAR_R;
+}
+function sleepersAlong(run, out) {
+  let carry = 0;
+  for (let i = 0; i + 1 < run.length; i++) {
+    const a = run[i], b = run[i + 1], dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+    if (len < 1e-6) continue;
+    const fx = dx / len, fy = dy / len, ang = Math.atan2(-fx, fy);
+    for (let d = carry; d < len; d += .65) {
+      const x = a[0] + fx * d, y = a[1] + fy * d;
+      if (Math.hypot(x, y) > SLEEPER_R) continue;
+      for (const off of [TRACK_OFF, -TRACK_OFF]) out.push([x - fy * off, y + fx * off, ang]);
+    }
+    carry = (carry - len) % .65; if (carry < 0) carry += .65;
+  }
+}
+
+// ------------------------------------------------------------------ custom layer
+let M = null;
+const layer = {
+  id: "three", type: "custom", renderingMode: "3d",
+  onAdd(m, gl) {
+    this.camera = new THREE.Camera();
+    this.renderer = new THREE.WebGLRenderer({canvas: m.getCanvas(), context: gl, antialias: true});
+    this.renderer.autoClear = false;
+  },
+  render(gl, args) {
+    if (!O) return;
+    const proj = args && args.defaultProjectionData ? args.defaultProjectionData.mainMatrix : args;
+    M = new THREE.Matrix4().fromArray(proj).multiply(
+      new THREE.Matrix4().makeTranslation(O.x, O.y, O.z).scale(new THREE.Vector3(MPU, -MPU, MPU)));
+    this.camera.projectionMatrix = M;
+    this.renderer.resetState(); this.renderer.render(scene, this.camera);
+  }
+};
+
+// ------------------------------------------------------------------ labels
+const LBL = $("labels");
+const trainLbl = TRAIN_POOL.map(() => { const d = document.createElement("div"); d.className = "lbl"; LBL.appendChild(d); return d; });
+const stLbl = Array.from({length: 12}, () => { const d = document.createElement("div"); d.className = "lbl st"; LBL.appendChild(d); return d; });
+const v4 = new THREE.Vector4();
+function place(el, x, y, z) {
+  if (!M) { el.style.display = "none"; return; }
+  v4.set(x, y, z, 1).applyMatrix4(M);
+  const W = map.getCanvas().clientWidth, H = map.getCanvas().clientHeight;
+  if (v4.w <= 0) { el.style.display = "none"; return; }
+  const sx = (v4.x / v4.w + 1) / 2 * W, sy = (1 - v4.y / v4.w) / 2 * H;
+  if (sx < -50 || sx > W + 50 || sy < -20 || sy > H + 20) { el.style.display = "none"; return; }
+  el.style.display = "block"; el.style.left = sx + "px"; el.style.top = sy + "px";
+}
+
+// ------------------------------------------------------------------ state, cameras, loop
+let follow = startTrip, simT = startTrip.k[0][0] - 30, speed = 60, playing = true, cam = "chase";
+let orbitAng = -2.4, orbitDist = 160, camS = null, snap = true, lastFrame = performance.now(), dispSpeed = 0;
+function frameTrains(t) {
+  const fs = stateAt(follow, Math.min(Math.max(t, follow.t0), follow.t1));
+  if (!O) { setOrigin(sample(fs.li, fs.ch)); buildNear(); }
+  const fp = trackPt(fs.li, fs.ch, fs.s, TRACK_OFF);
+  if (Math.hypot(fp.x, fp.y) > RECENTER_M) {
+    setOrigin(sample(fs.li, fs.ch)); buildNear(); return frameTrains(t);
+  }
+  const shown = [{T: follow, st: fs, d: 0}];
+  for (const T of TRIPS) {
+    if (T === follow) continue;
+    const s = stateAt(T, t); if (!s) continue;
+    const p = trackPt(s.li, s.ch, s.s, TRACK_OFF), d = Math.hypot(p.x, p.y);
+    if (d < TRAIN_R) shown.push({T, st: s, d});
+  }
+  shown.sort((a, b) => a.d - b.d);
+  TRAIN_POOL.forEach((P, i) => {
+    const el = trainLbl[i];
+    if (i >= shown.length) { P.group.visible = false; el.style.display = "none"; return; }
+    const {T, st} = shown[i]; P.group.visible = true;
+    P.cars.forEach((car, k) => {
+      const c = st.ch - st.s * (NOSE + k * CAR_PITCH);
+      const f = trackPt(st.li, c + st.s * 7.6, st.s, TRACK_OFF), r = trackPt(st.li, c - st.s * 7.6, st.s, TRACK_OFF);
+      car.position.set((f.x + r.x) / 2, (f.y + r.y) / 2, RAIL_Z);
+      car.rotation.z = Math.atan2(-(f.x - r.x), f.y - r.y);
+    });
+    const dl = delayAt(T, t), mid = P.cars[2].position;
+    el.textContent = T.id + (dl >= 60 ? " +" + Math.round(dl / 60) + " min" : " on time");
+    el.style.color = delayColor(dl); el.classList.toggle("me", T === follow);
+    if (T === follow && cam === "cab") el.style.display = "none"; else place(el, mid.x, mid.y, 7.5);
+  });
+  nearStations.forEach((ns, i) => { if (i < stLbl.length) { stLbl[i].textContent = ns.s.n; place(stLbl[i], ns.p.x, ns.p.y, 9); } });
+  for (let i = nearStations.length; i < stLbl.length; i++) stLbl[i].style.display = "none";
+  for (const P of SIG_POOL) if (P.sig) P.lampMat.color.setHex(signalRed(P.sig, t) ? 0xff2020 : 0x22ff66);
+  return fs;
+}
+function cameraFor(fs) {
+  const s = fs.s, at = (ch, lat) => trackPt(fs.li, ch, s, lat);
+  let from, to, fz, tz;
+  // cab: just ahead of the nose at driver eye height (the model has no cab interior)
+  if (cam === "cab") { from = at(fs.ch + s * 0.6, TRACK_OFF); to = at(fs.ch + s * 150, TRACK_OFF); fz = RAIL_Z + 3.0; tz = 0; }
+  else if (cam === "side") {
+    const mid = fs.ch - s * (NOSE + 2.5 * CAR_PITCH); from = at(mid, TRACK_OFF + 32); to = at(mid, TRACK_OFF); fz = 2.6; tz = 0;
+  } else if (cam === "orbit") {
+    const mid = fs.ch - s * (NOSE + 2.5 * CAR_PITCH), c = at(mid, TRACK_OFF);
+    from = {x: c.x + Math.cos(orbitAng) * orbitDist, y: c.y + Math.sin(orbitAng) * orbitDist}; to = c; fz = 6 + orbitDist * .38; tz = 1;
+  } else {  // chase: behind the last car, the whole train in shot
+    from = at(fs.ch - s * (NOSE + (NCARS - 1) * CAR_PITCH + 11.6 + 45), TRACK_OFF);
+    to = at(fs.ch + s * 220, TRACK_OFF); fz = 16; tz = 0;
+  }
+  const abs = (p) => [O.x + p.x * MPU, O.y - p.y * MPU];
+  return {h: abs(at(fs.ch, TRACK_OFF)), f: abs(from), t: abs(to), fz, tz};
+}
+function tick(now) {
+  const dt = Math.min(.25, (now - lastFrame) / 1000); lastFrame = now;  // cap: no leap after a hidden tab
+  if (playing) simT = Math.min(follow.t1, simT + dt * speed);
+  if (simT >= follow.t1) setPlaying(false);
+  const fs = frameTrains(simT);
+  // Smooth the camera's offset from the train, not its position: no lag at 300x, and the turn
+  // into a curve is softened. Mercator units, so a re-centre of the local frame does not jolt it.
+  const c = cameraFor(fs), a = snap ? 1 : 1 - Math.exp(-dt / .25);
+  const off = {f: [c.f[0] - c.h[0], c.f[1] - c.h[1]], t: [c.t[0] - c.h[0], c.t[1] - c.h[1]]};
+  if (!camS || snap) camS = {f: [...off.f], t: [...off.t], fz: c.fz, tz: c.tz};
+  for (const k of ["f", "t"]) for (const i of [0, 1]) camS[k][i] += (off[k][i] - camS[k][i]) * a;
+  camS.fz += (c.fz - camS.fz) * a; camS.tz += (c.tz - camS.tz) * a; snap = false;
+  const ll = (p) => new maplibregl.MercatorCoordinate(c.h[0] + p[0], c.h[1] + p[1], 0).toLngLat();
+  map.jumpTo(map.calculateCameraOptionsFromTo(ll(camS.f), camS.fz, ll(camS.t), camS.tz));
+  map.triggerRepaint();
+  hud(fs, dt);
+  requestAnimationFrame(tick);
+}
+function hud(fs, dt) {
+  $("clock").textContent = clock(simT);
+  const dl = delayAt(follow, simT); $("delay").textContent = (dl >= 0 ? "+" : "") + (dl / 60).toFixed(1);
+  $("delay").style.color = delayColor(dl);
+  dispSpeed += (fs.v * 3.6 - dispSpeed) * Math.min(1, dt * 4);  // speed shown is the display motion
+  $("speed").textContent = Math.round(dispSpeed);
+  $("next").textContent = nextStop(follow, simT);
+  const h = follow.h.find((x) => x[0] <= simT && simT <= x[1] + 15);
+  $("caption").hidden = !h; if (h) $("captext").textContent = h[2];
+  if (!scrubbing) $("scrub").value = simT;
+}
+
+// ------------------------------------------------------------------ controls
+let scrubbing = false;
+function setPlaying(p) { playing = p; $("play").textContent = p ? "Pause" : "Play"; }
+function setSpeed(v) { speed = v; document.querySelectorAll("[data-speed]").forEach((b) => b.classList.toggle("on", +b.dataset.speed === v)); }
+function setCam(c) { cam = c; snap = true; $("map").classList.toggle("orbit", c === "orbit");
+  document.querySelectorAll("[data-cam]").forEach((b) => b.classList.toggle("on", b.dataset.cam === c)); }
+function setTrip(id) {
+  follow = BY_ID[id]; simT = follow.k[0][0] - 30; snap = true; O = null;
+  $("scrub").min = follow.t0; $("scrub").max = follow.t1; setPlaying(true);
+}
+function nextHold() {
+  const h = follow.h.find((x) => x[0] > simT + 1);
+  if (!h) { $("captext").textContent = "No more holds on this trip."; $("caption").hidden = false; return; }
+  simT = h[0] - 20; snap = true; setSpeed(1); setPlaying(true);
+}
+const sel = $("trip");
+[...TRIPS].sort((a, b) => b.knock - a.knock || a.dep - b.dep).forEach((T) => {
+  const o = document.createElement("option"); o.value = T.id;
+  o.textContent = `${T.id} · ${clock(T.dep).slice(0, 5)} ${T.from} → ${T.to}` + (T.knock > 0 ? ` · knock-on ${T.knock} min` : "");
+  sel.appendChild(o);
+});
+sel.value = follow.id; sel.onchange = () => setTrip(sel.value);
+$("play").onclick = () => setPlaying(!playing);
+document.querySelectorAll("[data-speed]").forEach((b) => b.onclick = () => setSpeed(+b.dataset.speed));
+document.querySelectorAll("[data-cam]").forEach((b) => b.onclick = () => setCam(b.dataset.cam));
+$("hold").onclick = nextHold;
+const sc = $("scrub");
+sc.addEventListener("input", () => { scrubbing = true; simT = +sc.value; snap = true; });
+sc.addEventListener("change", () => { scrubbing = false; });
+window.addEventListener("keydown", (e) => {
+  if (e.target === sel) return;
+  const k = {"1": "chase", "2": "side", "3": "cab", "4": "orbit"}[e.key];
+  if (k) setCam(k); else if (e.key === " ") { setPlaying(!playing); e.preventDefault(); }
+  else if (e.key === "n" || e.key === "N") nextHold();
+});
+let drag = null;
+const mapEl = $("map");
+mapEl.addEventListener("pointerdown", (e) => { if (cam === "orbit") { drag = e.clientX; mapEl.setPointerCapture(e.pointerId); } });
+mapEl.addEventListener("pointermove", (e) => { if (drag !== null) { orbitAng -= (e.clientX - drag) * .008; drag = e.clientX; } });
+mapEl.addEventListener("pointerup", () => { drag = null; });
+mapEl.addEventListener("wheel", (e) => { if (cam === "orbit") { orbitDist = Math.max(40, Math.min(900, orbitDist * (1 + e.deltaY * .001))); e.preventDefault(); } }, {passive: false});
+
+setSpeed(60); setCam("chase"); sc.min = follow.t0; sc.max = follow.t1;
+let started = false;
+function start() { if (started) return; started = true; map.addLayer(layer); requestAnimationFrame(tick); }
+// An inline style can finish loading before this line runs, so check as well as listen.
+if (map.loaded() || map.isStyleLoaded()) start(); else { map.once("load", start); map.once("style.load", start); }
+window.ride = {map, get t() { return simT; }, set t(v) { simT = v; snap = true; }, setCam, setTrip, nextHold, setSpeed, setPlaying};
+</script>
+</body></html>

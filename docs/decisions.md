@@ -112,3 +112,67 @@ Values marked ASSUMPTION go into `config.yaml` with the same label and into the 
     results use. Processed outputs record the feed date.
 31. No commits or pushes by the assistant. The user commits.
 32. Plain hyphens only in docs and comments, no em or en dashes, no emoji.
+
+## Incidents and replays
+
+Added 2026-11-20 after the literature review (`docs/literature_review.md`).
+
+33. **Section outage as an incident type.** `SectionOutage` closes the track between two
+    stations, one or both directions, for a set time. It is separate from the small random
+    primary delays. Reason: 2026 KTMB incidents (overhead line, signalling, cable theft) close
+    a section for hours, which the lognormal primary delays capped at 60 min cannot produce.
+34. **Outage priority.** Block and platform resources are `simpy.PriorityResource`. The outage
+    requests with priority -1 so it goes ahead of queuing trains; trains share priority 0, so
+    the order between trains is unchanged. An outage never removes a train already in a block.
+35. **New cause `outage`** with root id `O:<name>`. A train waiting for a closed block gets
+    the whole wait as `outage`, including any part spent queuing behind another train before
+    the outage began (simplification). Trains behind inherit the root as `knock_on`.
+36. **Replays fit start and duration.** News reports give the trains and their delays but not
+    when the outage began or how long it lasted. A grid search (5 min steps) with primary delays
+    off picks the pair with the lowest mean absolute error against peak simulated delay.
+    Reason: the only honest use of the data we have. It is calibration, not validation.
+37. **First replay: Tiroi to Seremban, 14 Jun 2026.** Tiroi is not an ETS stop, so the outage
+    closes the ETS section Labu to Seremban. Both directions (ASSUMPTION). Uses the 2026-11-20
+    timetable; all 8 reported trains exist in it.
+
+## International benchmarking
+
+Added 2026-11-20 (`docs/benchmarking.md`).
+
+38. **Benchmark set:** Japan, Switzerland, Austria, the Netherlands, South Korea. Hong Kong and
+    Singapore rank high on rail quality but through urban metros, so they are not compared
+    with a 900 km intercity corridor.
+39. **Punctuality profile.** Besides the 5 min headline, every run reports on-time % at
+    `benchmark_thresholds_min` (1, 3, 5, 10, 15). Reason: SBB and NS use 3 min, NS 10 min for
+    large delay, KTMB publishes no threshold.
+40. **Second recovery model, `supplement`.** Minimum running time = published running time with
+    a UIC 451-1 style supplement removed (pct of minimum plus minutes per 100 km), never faster
+    than line speed. Default stays `line_speed` until the user decides to switch, because the
+    switch changes every reported number. Reason: against line speed the ETS timetable shows a
+    median 37% supplement, where real railways plan 3-7%, so v1 overstates recovery.
+41. **The supplement minimum is fixed from the published timetable** (`Trip.base_run_s`), so a
+    buffer added in an experiment stays recoverable slack instead of raising the minimum too.
+
+## Ride along (3D view)
+
+Added 2026-11-20. Full plan and spike results: `docs/ride_view_plan.md`.
+
+42. **A demo view for the viva, not an analysis tool.** It shows RQ1 live: one train held at a red
+    signal behind a late train, with the cause named.
+43. **Track geometry from OpenStreetMap, fetched once and committed**
+    (`data/snapshots/ets_track_osm.geojson`). Shortest rail path between consecutive stations;
+    sidings cost more; a station may use any track node near it, because the two tracks of the
+    double line are often joined only far away. Reason: GTFS has no `shapes.txt`. Display only:
+    a model position (fraction along a section by GTFS km) maps to the same fraction along the
+    OSM line, so the model stays the single source of truth.
+44. **MapLibre GL JS for the ground, three.js for objects, plain Esri dark-grey tiles** (no
+    satellite imagery, user choice; no terrain, because OSM tunnels and bridges would not match a
+    DEM). No API keys. The MapLibre camera, set with `calculateCameraOptionsFromTo`, reaches
+    pitch 89, enough for a cab view.
+45. **Block-level motion.** `SimResult.occupancy` gained `t_req` (when the train reached the
+    signal), so the view knows how long a train stood at each signal. Recorded only with
+    `record_occupancy=True`; results are unchanged.
+46. **Easing into and out of stops is visual only**, and the view says so. Times at each block
+    boundary are exact.
+47. **Low-poly ETS built in code**, six cars, placeholder livery until reference photos are
+    supplied. One `makeTrain()` function, so a `.glb` model can replace it.

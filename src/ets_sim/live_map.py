@@ -17,6 +17,16 @@ from ets_sim.topology import Topology
 
 _KIND_ORDER = {"arr": 0, "pass": 1, "dep": 2}
 
+MAP_PX = 440   # full-size map height
+BOARD_PX = 173  # "most delayed now" list: header plus five rows, and its top border
+HEIGHT = 1040  # iframe height in px for the full layout (map 440 + schematic 236 + board)
+COMPACT_MAP_PX = 280  # inline view, sized to fit a laptop screen; the Expand dialog shows the full one
+
+
+def height(map_px: int = MAP_PX, board: bool = True) -> int:
+    """Iframe height that fits the panel exactly for this map height and board setting."""
+    return HEIGHT - (MAP_PX - int(map_px)) - (0 if board else BOARD_PX)
+
 
 def payload(events: pd.DataFrame, topo: Topology, trip_dirs: dict[str, int], late_min: float,
             start_s: float) -> dict:
@@ -30,7 +40,7 @@ def payload(events: pd.DataFrame, topo: Topology, trip_dirs: dict[str, int], lat
             x, jx = j.line_km - s.branch_km, idx[j.name]
         else:
             x, jx = s.line_km, -1
-        st_rows.append({"n": s.name.title(), "x": round(x, 2), "b": int(bool(s.branch_junction)), "j": jx,
+        st_rows.append({"n": style.station_name(s.name), "x": round(x, 2), "b": int(bool(s.branch_junction)), "j": jx,
                         "p": int(stops.get(s.name, 0)), "lat": round(s.lat, 5), "lon": round(s.lon, 5)})
 
     ev = events.assign(_o=events["kind"].map(_KIND_ORDER)).sort_values(["trip_id", "actual_s", "_o"])
@@ -46,19 +56,20 @@ def payload(events: pd.DataFrame, topo: Topology, trip_dirs: dict[str, int], lat
 
 
 def html(events: pd.DataFrame, topo: Topology, trip_dirs: dict[str, int], late_min: float,
-         start_s: float = 7 * 3600) -> str:
+         start_s: float = 7 * 3600, map_px: int = MAP_PX, board: bool = True) -> str:
+    """map_px sets the map height. board=False hides the "most delayed now" list (compact view).
+    Size the iframe with height(map_px, board)."""
     data = json.dumps(payload(events, topo, trip_dirs, late_min, start_s), separators=(",", ":"))
     data = data.replace("</", r"<\/")  # a name containing "</script>" cannot end the script block
     tokens = {"BG": style.BG, "PANEL": style.PANEL, "RULE": style.RULE, "TEXT": style.TEXT,
               "MUTED": style.MUTED, "FAINT": style.FAINT, "ORANGE": style.ORANGE, "ON_TIME": style.ON_TIME,
               "MAJOR": style.MAJOR, "ORANGE_HOVER": style.ORANGE_HOVER}
-    out = _TEMPLATE.replace("__DATA__", data)
+    out = (_TEMPLATE.replace("__DATA__", data).replace("__MAPH__", str(int(map_px)))
+           .replace("__BOARD__", "grid" if board else "none"))
     for k, v in tokens.items():
         out = out.replace(f"__{k}__", v)
     return out
 
-
-HEIGHT = 1040  # iframe height in px; matches the layout below (map 440 + schematic 236 + board)
 
 _TEMPLATE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -103,7 +114,7 @@ input[type=range]{flex:1;accent-color:var(--amber);height:24px;margin:0}
 .tr.hi path{stroke:var(--text);stroke-width:1.5}
 .legend{display:flex;gap:16px;padding:0 16px 10px;font-size:11px;color:var(--muted);flex-wrap:wrap}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.board{border-top:1px solid var(--rule);display:grid;grid-template-columns:1fr 1fr;align-content:start;min-height:172px}
+.board{border-top:1px solid var(--rule);display:__BOARD__;grid-template-columns:1fr 1fr;align-content:start;min-height:172px}
 .board h4{grid-column:1/-1;margin:0;padding:10px 16px 6px;font-size:10px;text-transform:uppercase;
  letter-spacing:.12em;color:var(--muted);font-weight:600}
 .row{display:grid;grid-template-columns:70px 34px 1fr 74px;gap:8px;padding:5px 16px;font-family:var(--mono);
@@ -116,7 +127,7 @@ input[type=range]{flex:1;accent-color:var(--amber);height:24px;margin:0}
 .empty{grid-column:1/-1;padding:10px 16px 14px;color:var(--muted);font-size:12px}
 #tip{position:fixed;pointer-events:none;background:var(--bg);border:1px solid var(--rule);border-radius:3px;
  padding:6px 8px;font-family:var(--mono);font-size:11px;line-height:1.5;display:none;z-index:5;white-space:nowrap}
-#map{height:440px;background:#000;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+#map{height:__MAPH__px;background:#000;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
 .leaflet-container{font-family:var(--sans);background:#000}
 .leaflet-tile-pane{filter:brightness(.75) contrast(1.1)}
 .leaflet-control-attribution{background:rgba(0,0,0,.6)!important;color:var(--faint)!important;font-size:9px}
