@@ -176,3 +176,31 @@ Added 2026-11-20. Full plan and spike results: `docs/ride_view_plan.md`.
     boundary are exact.
 47. **Low-poly ETS built in code**, six cars, placeholder livery until reference photos are
     supplied. One `makeTrain()` function, so a `.glb` model can replace it.
+
+## Hosting
+
+Added 2026-11-21, after the hosted app failed on 2026-11-20.
+
+48. **What happened.** Commit `feacd77` added a `guide` argument to `style.section()` and called it
+    from `app/streamlit_app.py`. Streamlit Community Cloud pulled the commit into the running
+    process and reran the script. Streamlit reloads changed modules under `app/` only, so the new
+    app called the old `ets_sim.style` still held in `sys.modules`: `TypeError: section() takes
+    from 1 to 2 positional arguments but 3 were given`. The code in the repo was correct. What
+    made it possible: two halves of one change load through different reload rules, and no check
+    ran the whole app before the push.
+49. **Fix: re-import `ets_sim` when its source changes** (`app/module_freshness.py`). Each run
+    compares a fingerprint (path, mtime, size) of `src/ets_sim/` with the one stamped on the
+    loaded package. On a mismatch it drops every `ets_sim` module and clears `st.cache_data` and
+    `st.cache_resource`, because cached objects were built by the old classes. A process with no
+    stamp counts as stale, so the deploy carrying this fix also heals the running app. Cost: about
+    25 `stat` calls per rerun. Rejected: reloading on every rerun (loses caches), and moving
+    `ets_sim` under `app/` (breaks the package layout and the tests).
+50. **Guard: a headless run of the whole app in the tests** (`tests/test_app.py`, Streamlit
+    `AppTest`) and a `tests` workflow on every push, Python 3.13 like the host. Tests import from
+    `src/` through `pythonpath` in `pyproject.toml`, without `pip install -e .`, the same way the
+    host runs the app.
+51. **Each tab fails on its own** (`guarded()` in `app/streamlit_app.py`). An exception in one tab
+    keeps what that tab already drew, shows a plain message, and logs the traceback; the other
+    tabs still run. Only `Exception` is caught, so `st.stop()` and `st.rerun()` still work. The
+    shared run before the tabs is not guarded: without it no tab has data, so it fails the page.
+    Test: `test_one_failing_tab_does_not_blank_the_page` breaks one tab on purpose.

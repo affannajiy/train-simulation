@@ -6,19 +6,30 @@ Run:  streamlit run app/streamlit_app.py
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import sys
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
 # Streamlit Community Cloud installs requirements.txt only, not this package, so make
 # src/ importable. A local `pip install -e .` makes this a no-op.
 _SRC = str(Path(__file__).resolve().parents[1] / "src")
-if _SRC not in sys.path:
-    sys.path.insert(0, _SRC)
+_APP = str(Path(__file__).resolve().parent)
+for _p in (_SRC, _APP):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import pandas as pd  # noqa: E402
 import plotly.graph_objects as go
 import streamlit as st
+
+from module_freshness import ensure_fresh
+
+# Must run before any ets_sim import. See app/module_freshness.py for why.
+if ensure_fresh("ets_sim", Path(_SRC) / "ets_sim"):
+    st.cache_data.clear()
+    st.cache_resource.clear()
 
 from ets_sim import live_map, metrics, realtime, ride_view, style, viz
 from ets_sim.config import load_config, project_path
@@ -38,6 +49,25 @@ ASSUMED = " :orange-badge[assumed]"
 
 def section(title: str, note: str = "", guide: str = "") -> None:
     st.markdown(style.section(title, note, guide), unsafe_allow_html=True)
+
+
+_log = logging.getLogger("ets_sim.app")
+
+
+@contextmanager
+def guarded(tab: str):
+    """One tab's failure stays in that tab: what it drew so far stays, the other tabs still run.
+    The full traceback goes to the server log (Manage app, Logs on the host). Only Exception is
+    caught, so st.stop() and st.rerun() still work."""
+    try:
+        yield
+    except Exception as exc:
+        _log.exception("Tab %r failed", tab)
+        st.error(f"The {tab} tab could not finish. The other tabs are not affected. Change a setting "
+                 "to try again; if it keeps failing, the details are in the server log.",
+                 icon=":material/error:")
+        if st.get_option("client.showErrorDetails") in ("full", "stacktrace"):
+            st.exception(exc)
 
 
 # Sidebar tooltips. Kept in one place so the wording stays consistent; Markdown is allowed.
@@ -211,7 +241,7 @@ tabs = st.tabs(["Control Room", "Time–Distance", "Bottlenecks", "Experiments",
 
 # ------------------------------------------------------------------ Control room
 
-with tabs[0]:
+with tabs[0], guarded("Control Room"):
     kpis = []
     for key, label, unit, fmt in [
         ("on_time_all_pct", "On time · all stops", "%", "{:.1f}"),
@@ -281,7 +311,7 @@ with tabs[0]:
 
 # ------------------------------------------------------------------ Time-distance
 
-with tabs[1]:
+with tabs[1], guarded("Time–Distance"):
     c1, c2 = st.columns([1, 2])
     dirs = c1.pills("Direction", ["Northbound", "Southbound"], default=["Northbound", "Southbound"],
                     selection_mode="multi", help="Show one direction or both. One direction is easier to read.")
@@ -310,7 +340,7 @@ with tabs[1]:
 
 # ------------------------------------------------------------------ Bottlenecks
 
-with tabs[2]:
+with tabs[2], guarded("Bottlenecks"):
     bn = metrics.bottlenecks(incs, reps)
     section("Where knock-on delay is made", f"along the line · mean of {reps} replications", guide=(
         "Each bar is a section of track between two stations, or a station's platforms, placed at its km. "
@@ -366,7 +396,7 @@ with tabs[2]:
 
 # ------------------------------------------------------------------ Experiments
 
-with tabs[3]:
+with tabs[3], guarded("Experiments"):
     ex = cfg["experiments"]
     results_dir = project_path(cfg["data"]["results_dir"])
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
@@ -433,7 +463,7 @@ def realtime_frame(day: str, source) -> pd.DataFrame:
     return realtime.read_day(source)
 
 
-with tabs[4]:
+with tabs[4], guarded("Live vs Sim"):
     rt_days, rt_where = realtime_sources()
     rt = None
     if not rt_days:
@@ -492,7 +522,7 @@ with tabs[4]:
 
 # ------------------------------------------------------------------ Data quality
 
-with tabs[5]:
+with tabs[5], guarded("Data Quality"):
     section("Loader report", "every trip dropped, cut short or flagged, with the reason", guide=(
         "When the GTFS timetable is loaded, trips that cannot be simulated are dropped or trimmed, and odd "
         "ones are flagged. Each row says which trip and why. Hover the table for search and download."))
@@ -510,7 +540,7 @@ def doc_link(path: str) -> str:
     return f"[{path}]({REPO_URL}/blob/main/{path})" if REPO_URL else f"`{path}`"
 
 
-with tabs[6]:
+with tabs[6], guarded("About"):
     with st.container(key="about"):
         section("What this is", "a final-year project")
         st.markdown(
@@ -572,7 +602,8 @@ with tabs[6]:
             ]}), hide_index=True, width="stretch")
         st.caption("The sidebar changes the scenario for every tab. Change a value and the whole app reruns. "
                    "Hover the (i) next to a chart title for how to read it, and the fullscreen icon at the "
-                   "top right of any chart or table to enlarge it.")
+                   "top right of any chart or table to enlarge it. If one tab cannot finish, it says so and "
+                   "the other tabs keep working.")
 
         section("What it has found so far", f"timetable of {SERVICE_DATE}, 100 replications")
         st.markdown(
@@ -604,6 +635,7 @@ with tabs[6]:
             "result can be reproduced.\n"
             "- **Positions:** KTMB GTFS realtime vehicle positions, logged hourly by a GitHub Actions job.\n"
             "- **Built with** Python, SimPy, pandas, Plotly and Streamlit.\n"
+            "- **Checked** by automated tests on every change, including a run of this whole app.\n"
             f"- **Read more:** {doc_link('README.md')} (full method and assumptions), "
             f"{doc_link('docs/decisions.md')} (why each design choice), "
             f"{doc_link('docs/benchmarking.md')} (international comparison)."

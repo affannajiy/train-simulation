@@ -20,12 +20,12 @@ Design decisions and the reason for each are in [docs/decisions.md](docs/decisio
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt     # runtime + pytest
-pip install -e .
+pip install -e .                        # optional: tests and the app import src/ without it
 ```
 
 ```powershell
 python -m ets_sim.loader                 # build data/processed/ (the app also does this on first run)
-python -m pytest                         # verification tests
+python -m pytest                         # verification tests, plus a headless run of the whole app
 python -m ets_sim.experiments            # all experiments, 100 replications each, CSVs in results/
 streamlit run app/streamlit_app.py       # the app
 ```
@@ -56,13 +56,15 @@ python logger/fetch_realtime.py --once                # one realtime poll into d
 | `src/ets_sim/ride_view.py`, `ride_view.html` | "Ride along" 3D follow camera (MapLibre ground, three.js trains and signals) |
 | `scripts/fetch_track.py` | One-off: builds the track geometry from OpenStreetMap |
 | `src/ets_sim/realtime.py` | Finds logged realtime CSVs locally or on the `realtime-data` branch |
-| `app/streamlit_app.py` | Streamlit front end |
+| `app/streamlit_app.py` | Streamlit front end. Each tab is guarded: an error stays in its tab |
+| `app/module_freshness.py` | Re-imports `src/ets_sim` when its files change (hot redeploy on the host) |
 | `logger/` | Realtime vehicle-position logger |
 | `.github/workflows/realtime_logger.yml` | Hourly logger job |
+| `.github/workflows/tests.yml` | Runs `pytest` on every push and pull request (Python 3.13, like the host) |
 | `requirements.txt` / `requirements-dev.txt` | Runtime pins (what the host installs) / plus pytest |
 | `data/snapshots/` | Pinned GTFS feed used for all results, and the OSM track geometry (committed) |
 | `data/raw/`, `data/processed/`, `results/` | Generated, not committed |
-| `tests/` | Verification tests |
+| `tests/` | Verification tests; `test_app.py` runs the whole app headless |
 | `docs/decisions.md` | Design decision record |
 
 ## How the model works
@@ -154,6 +156,15 @@ is not used: it serves static files only and cannot run a Python server.
 The host installs `requirements.txt` only. The app adds `src/` to the import path itself, and
 builds `data/processed/` from the committed snapshot on first load. A free app sleeps after a
 few days without visitors and takes about 30 s to wake.
+
+The host deploys `main` as soon as it is pushed, into the running process, without a restart.
+`app/module_freshness.py` re-imports `src/ets_sim` when its files change, so app and package
+never run at different versions. The `tests` workflow runs every push, including a headless run
+of the whole app (`tests/test_app.py`). Run `python -m pytest` before you push. If the hosted
+app still shows an old error, use Manage app, Reboot.
+
+If one tab fails, that tab shows a short message and the other tabs keep working. The full
+error is in the host's log (Manage app, Logs), not on the page.
 
 No API keys: both data.gov.my feeds are public, and the workflow uses the built-in
 `GITHUB_TOKEN`. Never commit `.streamlit/secrets.toml` or `.env` (both are git-ignored).

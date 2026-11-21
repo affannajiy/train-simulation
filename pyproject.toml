@@ -18,3 +18,5 @@ ets_sim = ["*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Import ets_sim from src/ without installing it, the same way Streamlit Cloud runs the app.
+pythonpath = ["src"]
